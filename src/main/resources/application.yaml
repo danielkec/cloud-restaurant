@@ -1,0 +1,8 @@
+server:
+  port: 8080
+  host: 0.0.0.0
+
+db:
+  url: mysqlx://localhost:33060/docstore?user=user&password=password
+  schema: docstore
+  collection: restaurants

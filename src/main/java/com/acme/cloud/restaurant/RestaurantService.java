@@ -1,0 +1,149 @@
+package com.acme.cloud.restaurant;
+
+import java.util.ArrayList;
+import java.util.Optional;
+import java.util.Properties;
+
+import io.helidon.config.Config;
+import io.helidon.http.HeaderName;
+import io.helidon.http.HeaderNames;
+import io.helidon.http.Status;
+import io.helidon.webserver.http.HttpRules;
+import io.helidon.webserver.http.HttpService;
+import io.helidon.webserver.http.ServerRequest;
+import io.helidon.webserver.http.ServerResponse;
+
+import com.mysql.cj.xdevapi.AddResult;
+import com.mysql.cj.xdevapi.AddStatement;
+import com.mysql.cj.xdevapi.Client;
+import com.mysql.cj.xdevapi.ClientFactory;
+import com.mysql.cj.xdevapi.Collection;
+import com.mysql.cj.xdevapi.DbDoc;
+import com.mysql.cj.xdevapi.JsonArray;
+import com.mysql.cj.xdevapi.JsonParser;
+import com.mysql.cj.xdevapi.ModifyStatement;
+import com.mysql.cj.xdevapi.RemoveStatement;
+import com.mysql.cj.xdevapi.Result;
+import com.mysql.cj.xdevapi.Session;
+
+class RestaurantService implements HttpService {
+
+    private static final HeaderName LIMIT_HEADER = HeaderNames.create("limit");
+    private final Client client;
+    private final String schema;
+    private final String collection;
+
+    public RestaurantService(Config config) {
+        this.client = new ClientFactory().getClient(config.get("db.url").asString().get(), new Properties());
+        this.schema = config.get("db.schema").asString().orElse("docstore");
+        this.collection = config.get("db.collection").asString().orElse("restaurants");
+    }
+
+    @Override
+    public void routing(HttpRules rules) {
+        rules.get("/{name}", this::getRestaurantByName)
+                .put("/{name}", this::updateRestaurantByName)
+                .delete("/{name}", this::deleteRestaurantByName)
+                .post(this::createRestaurant)
+                .get(this::getRestaurantList);
+    }
+
+    private void deleteRestaurantByName(ServerRequest req, ServerResponse res) {
+        String name = req.path().pathParameters().get("name");
+        Session session = null;
+        try {
+            session = client.getSession();
+            Collection coll = session.getSchema(schema).getCollection(collection);
+            RemoveStatement statement = coll
+                    .remove("name like :name")
+                    .bind("name", name);
+
+            Result result = statement.execute();
+
+            res.send("Deleted " + result.getAffectedItemsCount() + " docs.");
+        } finally {
+            Optional.ofNullable(session).ifPresent(Session::close);
+        }
+    }
+
+    private void createRestaurant(ServerRequest req, ServerResponse res) {
+        DbDoc payload = JsonParser.parseDoc(req.content().as(String.class));
+        Session session = null;
+        try {
+            session = client.getSession();
+            Collection coll = session.getSchema(schema).getCollection(collection);
+            AddStatement statement = coll.add(payload);
+
+            AddResult result = statement.execute();
+
+            res.send("Created restaurant with id" + result.getGeneratedIds() + " docs.");
+        } finally {
+            Optional.ofNullable(session).ifPresent(Session::close);
+        }
+    }
+
+    private void getRestaurantByName(ServerRequest req, ServerResponse res) {
+        String name = req.path().pathParameters().get("name");
+        Session session = null;
+        try {
+            session = client.getSession();
+            Collection coll = session.getSchema(schema).getCollection(collection);
+            DbDoc result = coll.find("name = :name")
+                    .bind("name", name)
+                    .execute()
+                    .fetchOne();
+
+            if (result != null) {
+                res.send(result.toFormattedString());
+            } else {
+                res.status(Status.NOT_FOUND_404)
+                        .send("No restaurant found");
+            }
+        } finally {
+            Optional.ofNullable(session).ifPresent(Session::close);
+        }
+    }
+
+    private void updateRestaurantByName(ServerRequest req, ServerResponse res) {
+        String name = req.path().pathParameters().get("name");
+        DbDoc payload = JsonParser.parseDoc(req.content().as(String.class));
+
+        Session session = null;
+        try {
+            session = client.getSession();
+            Collection coll = session.getSchema(schema).getCollection(collection);
+            ModifyStatement statement = coll.modify("name like :name")
+                    .bind("name", name);
+
+            statement.patch(payload);
+
+            long affectedItemsCount = statement.execute()
+                    .getAffectedItemsCount();
+
+            res.send("Updated " + affectedItemsCount + " docs.");
+        } finally {
+            Optional.ofNullable(session).ifPresent(Session::close);
+        }
+    }
+
+    private void getRestaurantList(ServerRequest req, ServerResponse res) {
+        Optional<Integer> limit = req.headers()
+                .value(LIMIT_HEADER)
+                .map(Integer::parseInt);
+        Session session = null;
+        try {
+            session = client.getSession();
+            Collection coll = session.getSchema(schema).getCollection(collection);
+            JsonArray result = coll.find()
+                    .limit(limit.orElse(20))
+                    .execute()
+                    .fetchAll()
+                    .stream()
+                    .map(dbDoc -> dbDoc.get("name"))
+                    .collect(JsonArray::new, ArrayList::add, (a1, a2) -> {});
+            res.send(result.toFormattedString());
+        } finally {
+            Optional.ofNullable(session).ifPresent(Session::close);
+        }
+    }
+}
