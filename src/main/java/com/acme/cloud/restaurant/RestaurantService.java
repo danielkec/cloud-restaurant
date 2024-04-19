@@ -1,6 +1,8 @@
 package com.acme.cloud.restaurant;
 
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -20,11 +22,14 @@ import com.mysql.cj.xdevapi.ClientFactory;
 import com.mysql.cj.xdevapi.Collection;
 import com.mysql.cj.xdevapi.DbDoc;
 import com.mysql.cj.xdevapi.JsonArray;
+import com.mysql.cj.xdevapi.JsonNumber;
 import com.mysql.cj.xdevapi.JsonParser;
+import com.mysql.cj.xdevapi.JsonString;
 import com.mysql.cj.xdevapi.ModifyStatement;
 import com.mysql.cj.xdevapi.RemoveStatement;
 import com.mysql.cj.xdevapi.Result;
 import com.mysql.cj.xdevapi.Session;
+import com.mysql.cj.xdevapi.SqlResult;
 
 class RestaurantService implements HttpService {
 
@@ -41,9 +46,12 @@ class RestaurantService implements HttpService {
 
     @Override
     public void routing(HttpRules rules) {
-        rules.get("/{name}", this::getRestaurantByName)
+        rules
                 .put("/{name}", this::updateRestaurantByName)
+                .put("/{name}/{grade}/{score}", this::rateRestaurantByName)
                 .delete("/{name}", this::deleteRestaurantByName)
+                .get("/leader-board", this::getLeaderBoard)
+                .get("/{name}", this::getRestaurantByName)
                 .post(this::createRestaurant)
                 .get(this::getRestaurantList);
     }
@@ -104,6 +112,36 @@ class RestaurantService implements HttpService {
         }
     }
 
+    private void rateRestaurantByName(ServerRequest req, ServerResponse res) {
+        String name = req.path().pathParameters().get("name");
+        String grade = req.path().pathParameters().get("grade");
+        String score = req.path().pathParameters().get("score");
+
+        Session session = null;
+        try {
+            session = client.getSession();
+            Collection coll = session.getSchema(schema).getCollection(collection);
+            ModifyStatement statement = coll.modify("name like :name")
+                    .bind("name", name);
+
+            DbDoc gradeDoc = coll.newDoc()
+                    .add("grade", new JsonString().setValue(grade))
+                    .add("score", new JsonNumber().setValue(score))
+                    .add("date", coll.newDoc()
+                            .add("$date", new JsonString().setValue(Instant.now().toString()))
+                    );
+
+            statement.arrayAppend("$grades", gradeDoc);
+
+            long affectedItemsCount = statement.execute()
+                    .getAffectedItemsCount();
+
+            res.send("Updated " + affectedItemsCount + " docs.");
+        } finally {
+            Optional.ofNullable(session).ifPresent(Session::close);
+        }
+    }
+
     private void updateRestaurantByName(ServerRequest req, ServerResponse res) {
         String name = req.path().pathParameters().get("name");
         DbDoc payload = JsonParser.parseDoc(req.content().as(String.class));
@@ -140,10 +178,50 @@ class RestaurantService implements HttpService {
                     .fetchAll()
                     .stream()
                     .map(dbDoc -> dbDoc.get("name"))
-                    .collect(JsonArray::new, ArrayList::add, (a1, a2) -> {});
+                    .collect(JsonArray::new, ArrayList::add, ArrayList::addAll);
             res.send(result.toFormattedString());
         } finally {
             Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
+
+    private void getLeaderBoard(ServerRequest req, ServerResponse res) {
+        Optional<Integer> limit = req.headers()
+                .value(LIMIT_HEADER)
+                .map(Integer::parseInt);
+
+        Session session = null;
+        try {
+            session = client.getSession();
+            SqlResult result = session.sql(
+                    """
+                     WITH cte1 AS (SELECT doc ->> "$.name"            AS name,
+                                          doc ->> "$.cuisine"         AS cuisine,
+                                          (SELECT AVG(score)
+                                           FROM JSON_TABLE(doc, "$.grades[*]" COLUMNS (score INT
+                                               PATH "$.score")) AS r) AS avg_score
+                                   FROM docstore.restaurants)
+                     SELECT *,
+                            RANK()
+                                    OVER ( PARTITION BY cuisine ORDER BY avg_score) AS `rank`
+                     FROM cte1
+                     ORDER BY `rank`, avg_score DESC, name
+                     LIMIT ?;
+                     """)
+                    .bind(limit.orElse(5))
+                    .execute();
+
+            List<Leader> board = result.fetchAll().stream()
+                    .map(row -> new Leader(row.getString("name"),
+                                           row.getString("cuisine"),
+                                           row.getDouble("avg_score")))
+                    .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
+
+            res.send(board);
+        } finally {
+            Optional.ofNullable(session).ifPresent(Session::close);
+        }
+    }
+
+    public record Leader(String name, String cuisine, Double score) {}
 }

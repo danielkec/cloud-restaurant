@@ -43,6 +43,10 @@
             <artifactId>helidon-logging-jul</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <dependency>
+            <groupId>io.helidon.http.media</groupId>
+            <artifactId>helidon-http-media-jsonb</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
