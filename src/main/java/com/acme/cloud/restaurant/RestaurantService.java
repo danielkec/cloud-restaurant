@@ -2,7 +2,6 @@ package com.acme.cloud.restaurant;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -194,34 +193,25 @@ class RestaurantService implements HttpService {
         try {
             session = client.getSession();
             SqlResult result = session.sql(
-                    """
-                     WITH cte1 AS (SELECT doc ->> "$.name"            AS name,
-                                          doc ->> "$.cuisine"         AS cuisine,
-                                          (SELECT AVG(score)
-                                           FROM JSON_TABLE(doc, "$.grades[*]" COLUMNS (score INT
-                                               PATH "$.score")) AS r) AS avg_score
-                                   FROM docstore.restaurants)
-                     SELECT *,
-                            RANK()
-                                    OVER ( PARTITION BY cuisine ORDER BY avg_score) AS `rank`
-                     FROM cte1
-                     ORDER BY `rank`, avg_score DESC, name
-                     LIMIT ?;
-                     """)
+             """
+             select json_pretty(json_arrayagg(json_object("name", name, "cuisine", cuisine, "avg_score", avg_score))) leader_board
+             from (select *
+                   from (with cte1 as (select doc ->> "$.name"                                                              as name,
+                                              doc ->> "$.cuisine"                                                           as cuisine,
+                                              (select avg(score)
+                                               from json_table(doc, "$.grades[*]" columns (score int path "$.score")) as r) as avg_score
+                                       from restaurants)
+                         select *, row_number() over ( partition by cuisine order by avg_score desc) as `rank`
+                         from cte1
+                         order by `rank`, avg_score desc) b
+                   where `rank` = 1 limit ?) dt;
+             """)
                     .bind(limit.orElse(5))
                     .execute();
 
-            List<Leader> board = result.fetchAll().stream()
-                    .map(row -> new Leader(row.getString("name"),
-                                           row.getString("cuisine"),
-                                           row.getDouble("avg_score")))
-                    .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
-
-            res.send(board);
+            res.send(result.fetchOne().getString("leader_board"));
         } finally {
             Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
-
-    public record Leader(String name, String cuisine, Double score) {}
 }
