@@ -21,7 +21,7 @@ docker run --network host --name=mysql -d mysql/docstore
 ```
 Generate demo restaurant data with python script.
 ```sh
-python3 generate_restaurants.py
+bash generate_restaurants.sh
 ```
 Optionally check generated restaurant data presence.
 ```sql

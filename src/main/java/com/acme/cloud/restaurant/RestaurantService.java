@@ -57,9 +57,8 @@ class RestaurantService implements HttpService {
 
     private void deleteRestaurantByName(ServerRequest req, ServerResponse res) {
         String name = req.path().pathParameters().get("name");
-        Session session = null;
-        try {
-            session = client.getSession();
+
+        try (Session session = client.getSession()) {
             Collection coll = session.getSchema(schema).getCollection(collection);
             RemoveStatement statement = coll
                     .remove("name like :name")
@@ -68,32 +67,26 @@ class RestaurantService implements HttpService {
             Result result = statement.execute();
 
             res.send("Deleted " + result.getAffectedItemsCount() + " docs.");
-        } finally {
-            Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
 
     private void createRestaurant(ServerRequest req, ServerResponse res) {
         DbDoc payload = JsonParser.parseDoc(req.content().as(String.class));
-        Session session = null;
-        try {
-            session = client.getSession();
+
+        try (Session session = client.getSession()) {
             Collection coll = session.getSchema(schema).getCollection(collection);
             AddStatement statement = coll.add(payload);
 
             AddResult result = statement.execute();
 
             res.send("Created restaurant with id" + result.getGeneratedIds() + " docs.");
-        } finally {
-            Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
 
     private void getRestaurantByName(ServerRequest req, ServerResponse res) {
         String name = req.path().pathParameters().get("name");
-        Session session = null;
-        try {
-            session = client.getSession();
+
+        try (Session session = client.getSession()) {
             Collection coll = session.getSchema(schema).getCollection(collection);
             DbDoc result = coll.find("name = :name")
                     .bind("name", name)
@@ -106,8 +99,6 @@ class RestaurantService implements HttpService {
                 res.status(Status.NOT_FOUND_404)
                         .send("No restaurant found");
             }
-        } finally {
-            Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
 
@@ -116,9 +107,7 @@ class RestaurantService implements HttpService {
         String grade = req.path().pathParameters().get("grade");
         String score = req.path().pathParameters().get("score");
 
-        Session session = null;
-        try {
-            session = client.getSession();
+        try (Session session = client.getSession()) {
             Collection coll = session.getSchema(schema).getCollection(collection);
             ModifyStatement statement = coll.modify("name like :name")
                     .bind("name", name);
@@ -136,8 +125,6 @@ class RestaurantService implements HttpService {
                     .getAffectedItemsCount();
 
             res.send("Updated " + affectedItemsCount + " docs.");
-        } finally {
-            Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
 
@@ -145,9 +132,7 @@ class RestaurantService implements HttpService {
         String name = req.path().pathParameters().get("name");
         DbDoc payload = JsonParser.parseDoc(req.content().as(String.class));
 
-        Session session = null;
-        try {
-            session = client.getSession();
+        try (Session session = client.getSession()) {
             Collection coll = session.getSchema(schema).getCollection(collection);
             ModifyStatement statement = coll.modify("name like :name")
                     .bind("name", name);
@@ -158,8 +143,6 @@ class RestaurantService implements HttpService {
                     .getAffectedItemsCount();
 
             res.send("Updated " + affectedItemsCount + " docs.");
-        } finally {
-            Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
 
@@ -167,20 +150,16 @@ class RestaurantService implements HttpService {
         Optional<Integer> limit = req.headers()
                 .value(LIMIT_HEADER)
                 .map(Integer::parseInt);
-        Session session = null;
-        try {
-            session = client.getSession();
+        try (Session session = client.getSession()) {
             Collection coll = session.getSchema(schema).getCollection(collection);
             JsonArray result = coll.find()
-                    .limit(limit.orElse(20))
+                    .limit(limit.orElse(10))
                     .execute()
                     .fetchAll()
                     .stream()
                     .map(dbDoc -> dbDoc.get("name"))
                     .collect(JsonArray::new, ArrayList::add, ArrayList::addAll);
             res.send(result.toFormattedString());
-        } finally {
-            Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
 
@@ -189,29 +168,25 @@ class RestaurantService implements HttpService {
                 .value(LIMIT_HEADER)
                 .map(Integer::parseInt);
 
-        Session session = null;
-        try {
-            session = client.getSession();
+        try (Session session = client.getSession()) {
             SqlResult result = session.sql(
-             """
-             select json_pretty(json_arrayagg(json_object("name", name, "cuisine", cuisine, "avg_score", avg_score))) leader_board
-             from (select *
-                   from (with cte1 as (select doc ->> "$.name"                                                              as name,
-                                              doc ->> "$.cuisine"                                                           as cuisine,
-                                              (select avg(score)
-                                               from json_table(doc, "$.grades[*]" columns (score int path "$.score")) as r) as avg_score
-                                       from restaurants)
-                         select *, row_number() over ( partition by cuisine order by avg_score desc) as `rank`
-                         from cte1
-                         order by `rank`, avg_score desc) b
-                   where `rank` = 1 limit ?) dt;
-             """)
+                            """
+                                    select json_pretty(json_arrayagg(json_object("name", name, "cuisine", cuisine, "avg_score", avg_score))) leader_board
+                                    from (select *
+                                          from (with cte1 as (select doc ->> "$.name"                                                              as name,
+                                                                     doc ->> "$.cuisine"                                                           as cuisine,
+                                                                     (select avg(score)
+                                                                      from json_table(doc, "$.grades[*]" columns (score int path "$.score")) as r) as avg_score
+                                                              from restaurants)
+                                                select *, row_number() over ( partition by cuisine order by avg_score desc) as `rank`
+                                                from cte1
+                                                order by `rank`, avg_score desc) b
+                                          where `rank` = 1 limit ?) dt;
+                                    """)
                     .bind(limit.orElse(5))
                     .execute();
 
             res.send(result.fetchOne().getString("leader_board"));
-        } finally {
-            Optional.ofNullable(session).ifPresent(Session::close);
         }
     }
 }

@@ -33,3 +33,4 @@ nb-configuration.xml
 .classpath
 .factorypath
 
+/py-venv/
