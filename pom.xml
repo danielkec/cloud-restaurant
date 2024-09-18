@@ -47,6 +47,10 @@
             <groupId>io.helidon.http.media</groupId>
             <artifactId>helidon-http-media-jsonb</artifactId>
         </dependency>
+        <dependency>
+            <groupId>io.helidon.config</groupId>
+            <artifactId>helidon-config-object-mapping</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

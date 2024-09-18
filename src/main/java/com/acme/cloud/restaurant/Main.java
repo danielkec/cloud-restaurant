@@ -16,7 +16,7 @@ public class Main {
 
         WebServer server = WebServer.builder()
                 .config(config.get("server"))
-                .routing(r -> r.register("/restaurant", new RestaurantService(config)))
+                .routing(r -> r.register("/restaurant", new RestaurantService()))
                 .build()
                 .start();
 

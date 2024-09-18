@@ -34,13 +34,13 @@ class RestaurantService implements HttpService {
 
     private static final HeaderName LIMIT_HEADER = HeaderNames.create("limit");
     private final Client client;
-    private final String schema;
-    private final String collection;
+    private final Credentials cred;
 
-    public RestaurantService(Config config) {
-        this.client = new ClientFactory().getClient(config.get("db.url").asString().get(), new Properties());
-        this.schema = config.get("db.schema").asString().orElse("docstore");
-        this.collection = config.get("db.collection").asString().orElse("restaurants");
+    public record Credentials(String url, String schema, String collection) {}
+
+    public RestaurantService() {
+        this.cred = Config.global().get("db").as(Credentials.class).orElseThrow();
+        this.client = new ClientFactory().getClient(cred.url(), new Properties());
     }
 
     @Override
@@ -59,7 +59,7 @@ class RestaurantService implements HttpService {
         String name = req.path().pathParameters().get("name");
 
         try (Session session = client.getSession()) {
-            Collection coll = session.getSchema(schema).getCollection(collection);
+            Collection coll = session.getSchema(cred.schema()).getCollection(cred.collection());
             RemoveStatement statement = coll
                     .remove("name like :name")
                     .bind("name", name);
@@ -74,7 +74,7 @@ class RestaurantService implements HttpService {
         DbDoc payload = JsonParser.parseDoc(req.content().as(String.class));
 
         try (Session session = client.getSession()) {
-            Collection coll = session.getSchema(schema).getCollection(collection);
+            Collection coll = session.getSchema(cred.schema()).getCollection(cred.collection());
             AddStatement statement = coll.add(payload);
 
             AddResult result = statement.execute();
@@ -87,7 +87,7 @@ class RestaurantService implements HttpService {
         String name = req.path().pathParameters().get("name");
 
         try (Session session = client.getSession()) {
-            Collection coll = session.getSchema(schema).getCollection(collection);
+            Collection coll = session.getSchema(cred.schema()).getCollection(cred.collection());
             DbDoc result = coll.find("name = :name")
                     .bind("name", name)
                     .execute()
@@ -108,7 +108,7 @@ class RestaurantService implements HttpService {
         String score = req.path().pathParameters().get("score");
 
         try (Session session = client.getSession()) {
-            Collection coll = session.getSchema(schema).getCollection(collection);
+            Collection coll = session.getSchema(cred.schema()).getCollection(cred.collection());
             ModifyStatement statement = coll.modify("name like :name")
                     .bind("name", name);
 
@@ -133,7 +133,7 @@ class RestaurantService implements HttpService {
         DbDoc payload = JsonParser.parseDoc(req.content().as(String.class));
 
         try (Session session = client.getSession()) {
-            Collection coll = session.getSchema(schema).getCollection(collection);
+            Collection coll = session.getSchema(cred.schema()).getCollection(cred.collection());
             ModifyStatement statement = coll.modify("name like :name")
                     .bind("name", name);
 
@@ -151,7 +151,7 @@ class RestaurantService implements HttpService {
                 .value(LIMIT_HEADER)
                 .map(Integer::parseInt);
         try (Session session = client.getSession()) {
-            Collection coll = session.getSchema(schema).getCollection(collection);
+            Collection coll = session.getSchema(cred.schema()).getCollection(cred.collection());
             JsonArray result = coll.find()
                     .limit(limit.orElse(10))
                     .execute()
